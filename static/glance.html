@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Glance">
+<meta name="theme-color" content="#0e1116">
+<meta name="robots" content="noindex">
+<link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+<title>Glance</title>
+<style>
+  :root {
+    --bg: #0e1116; --card: #171b22; --line: #262c36; --text: #e8ebf0; --muted: #8b94a3;
+    --low: #ff5a5f; --inrange: #3ddc84; --high: #ffb020; --urgent: #ff3b30;
+    --insulin: #4aa8ff; --smb: #7cc4ff; --carbs: #f5a623; --warn: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  body { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .wrap { max-width: 720px; margin: 0 auto; display: grid; gap: 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; }
+  .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .num { font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .warn { color: var(--warn); }
+  .bad { color: var(--urgent); }
+
+  /* BG hero */
+  .hero { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .bg { display: flex; align-items: baseline; gap: 10px; }
+  .bg .value { font-size: 72px; font-weight: 700; letter-spacing: -.02em; line-height: 1; }
+  .bg .arrow { font-size: 44px; font-weight: 600; line-height: 1; }
+  .hero .side { text-align: right; display: grid; gap: 4px; }
+  .delta { font-size: 22px; font-weight: 600; }
+  .age { font-size: 14px; }
+  .stale-banner { display: none; margin-top: 10px; padding: 8px 10px; border-radius: 10px;
+    background: rgba(255,176,32,.12); color: var(--warn); font-size: 13px; }
+  .stale-banner.on { display: block; }
+  .stale-banner.bad { background: rgba(255,59,48,.14); color: var(--urgent); }
+
+  /* stat row */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+  .stat { background: #12161c; border-radius: 10px; padding: 8px 10px; }
+  .stat .v { font-size: 18px; font-weight: 600; margin-top: 2px; }
+
+  /* bolus */
+  .bolus { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .bolus .big { font-size: 34px; font-weight: 700; color: var(--insulin); }
+  .bolus .when { font-size: 20px; font-weight: 600; }
+  .prev { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill { background: #12161c; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font-size: 13px; }
+
+  /* chart */
+  .chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .seg { display: inline-flex; background: #12161c; border-radius: 9px; padding: 2px; }
+  .seg button { background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 7px; cursor: pointer; }
+  .seg button.on { background: var(--line); color: var(--text); }
+  #chart { width: 100%; display: block; touch-action: pan-y; }
+  #chart text { fill: var(--muted); font-size: 10px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 4px; flex-wrap: wrap; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+  /* smb */
+  .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 10px; }
+  .smbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+  .smb { background: #12161c; border-radius: 8px; padding: 5px 8px; display: flex; justify-content: space-between; font-size: 13px; }
+  .smb .u { color: var(--smb); font-weight: 600; }
+  .smb.manual { outline: 1px solid var(--insulin); }
+  .smb.manual .u { color: var(--insulin); }
+
+  .foot { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0 8px; }
+  .foot a { color: var(--muted); }
+  .err { display: none; color: var(--urgent); font-size: 13px; }
+  .err.on { display: block; }
+
+  @media (max-width: 420px) {
+    .bg .value { font-size: 60px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <section class="card" id="bgCard">
+    <div class="hero">
+      <div class="bg"><span class="value num" id="bgValue">--</span><span class="arrow" id="bgArrow"></span></div>
+      <div class="side">
+        <div class="delta num" id="bgDelta"></div>
+        <div class="age muted" id="bgAge">loading…</div>
+      </div>
+    </div>
+    <div class="stale-banner" id="staleBanner"></div>
+    <div class="stats">
+      <div class="stat"><div class="label">IOB</div><div class="v num" id="iob">--</div></div>
+      <div class="stat"><div class="label">COB</div><div class="v num" id="cob">--</div></div>
+      <div class="stat"><div class="label">Eventual</div><div class="v num" id="eventual">--</div></div>
+      <div class="stat"><div class="label">Temp basal</div><div class="v num" id="temp">--</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="label">Last bolus</div>
+    <div class="bolus">
+      <div class="big num" id="lbAmount">--</div>
+      <div style="text-align:right">
+        <div class="when num" id="lbAgo"></div>
+        <div class="muted num" id="lbTime"></div>
+      </div>
+    </div>
+    <div class="prev" id="lbPrev"></div>
+  </section>
+
+  <section class="card">
+    <div class="chart-head">
+      <div class="label">Glucose &amp; insulin</div>
+      <div class="seg" id="range">
+        <button data-h="3">3h</button><button data-h="6" class="on">6h</button><button data-h="12">12h</button><button data-h="24">24h</button>
+      </div>
+    </div>
+    <svg id="chart" height="240"></svg>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--inrange)"></span>BG</span>
+      <span><span class="dot" style="background:var(--smb)"></span>SMB</span>
+      <span><span class="dot" style="background:var(--insulin)"></span>Bolus</span>
+      <span><span class="dot" style="background:var(--carbs)"></span>Carbs</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="label">Insulin delivered</div>
+    <div class="totals">
+      <div class="stat"><div class="label">SMB today</div><div class="v num" id="tSmb">--</div></div>
+      <div class="stat"><div class="label">Bolus today</div><div class="v num" id="tBolus">--</div></div>
+      <div class="stat"><div class="label">SMB last 3h</div><div class="v num" id="t3h">--</div></div>
+    </div>
+    <div class="smbs" id="smbList"></div>
+  </section>
+
+  <section class="card">
+    <div class="stats" style="margin-top:0">
+      <div class="stat"><div class="label">Loop</div><div class="v num" id="loopAge">--</div></div>
+      <div class="stat"><div class="label">Reservoir</div><div class="v num" id="reservoir">--</div></div>
+      <div class="stat"><div class="label">Phone</div><div class="v num" id="phoneBat">--</div></div>
+      <div class="stat"><div class="label">Pump</div><div class="v num" id="pumpState">--</div></div>
+    </div>
+  </section>
+
+  <div class="err" id="err"></div>
+  <div class="foot">Updated <span id="updated">—</span> · <a href="/">Full Nightscout</a></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- config ----------
+  var REFRESH_MS = 60 * 1000;
+  var TICK_MS = 15 * 1000;
+  var BG_STALE_MIN = 11, BG_VERY_STALE_MIN = 21;
+  var LOOP_STALE_MIN = 16;
+  var qs = new URLSearchParams(location.search);
+  var token = qs.get('token');
+  var savedHours = null; try { savedHours = localStorage.getItem('glance.hours'); } catch (e) {}
+  var hours = parseInt(qs.get('hours') || savedHours || '6', 10) || 6;
+
+  var TIME_FMT = { hour: '2-digit', minute: '2-digit', hour12: false };
+
+  var ARROWS = { DoubleUp: '⇈', SingleUp: '↑', FortyFiveUp: '↗', Flat: '→', FortyFiveDown: '↘',
+    SingleDown: '↓', DoubleDown: '⇊', 'NOT COMPUTABLE': '–', 'RATE OUT OF RANGE': '⇕', NONE: '' };
+
+  var state = { units: 'mmol', thr: { bgHigh: 260, bgTargetTop: 180, bgTargetBottom: 80, bgLow: 55 },
+    entries: [], treatments: [], lastBoluses: [], ds: null, loadedAt: 0 };
+
+  // ---------- helpers ----------
+  function $(id) { return document.getElementById(id); }
+  function api(path) {
+    var url = path + (token ? (path.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(token) : '');
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error(path.split('?')[0] + ' → HTTP ' + r.status);
+      return r.json();
+    });
+  }
+  function mmol() { return state.units === 'mmol'; }
+  function fmtBg(mgdl) {
+    if (mgdl == null || isNaN(mgdl)) return '--';
+    return mmol() ? (mgdl / 18.0182).toFixed(1) : String(Math.round(mgdl));
+  }
+  function fmtDelta(d) {
+    if (d == null || isNaN(d)) return '';
+    var v = mmol() ? (d / 18.0182).toFixed(1) : String(Math.round(d));
+    if (Number(v) === 0) v = mmol() ? '0.0' : '0';
+    return (d > 0 ? '+' : d < 0 ? '' : '±') + v;
+  }
+  function fmtU(u) {
+    if (u == null) return '--';
+    var r = Math.round(u * 100) / 100;
+    return (r % 1 === 0 ? r.toFixed(1) : String(r)) + ' U';
+  }
+  function minsAgo(t) { return (Date.now() - t) / 60000; }
+  function fmtAgo(t) {
+    var m = Math.floor(minsAgo(t));
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    var h = Math.floor(m / 60), mm = m % 60;
+    if (h < 24) return h + 'h ' + (mm < 10 ? '0' : '') + mm + 'm ago';
+    var d = Math.floor(h / 24);
+    return d + 'd ' + (h % 24) + 'h ago';
+  }
+  function fmtClock(t) {
+    var d = new Date(t);
+    var s = d.toLocaleTimeString([], TIME_FMT);
+    if (new Date().toDateString() !== d.toDateString()) s = d.toLocaleDateString([], { weekday: 'short' }) + ' ' + s;
+    return s;
+  }
+  function bgColor(mgdl) {
+    var t = state.thr;
+    if (mgdl <= t.bgLow) return 'var(--urgent)';
+    if (mgdl < t.bgTargetBottom) return 'var(--low)';
+    if (mgdl >= t.bgHigh) return 'var(--urgent)';
+    if (mgdl > t.bgTargetTop) return 'var(--high)';
+    return 'var(--inrange)';
+  }
+  function tTime(x) { return x.mills || Date.parse(x.created_at || x.timestamp); }
+  function isSMB(x) { return x.eventType === 'SMB' || x.isSMB === true || x.type === 'SMB'; }
+  function isManualBolus(x) { return !isSMB(x) && Number(x.insulin) > 0; }
+  function startOfToday() { var d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  function svgEl(name, attrs) {
+    var el = document.createElementNS('http://www.w3.org/2000/svg', name);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  // ---------- data ----------
+  function load() {
+    var now = Date.now();
+    var nowIso = new Date(now + 60 * 1000).toISOString(); // excludes bogus far-future records
+    var since = Math.min(now - 24 * 3600e3, startOfToday());
+    var sinceIso = new Date(since).toISOString();
+    var entryCount = Math.ceil((now - since) / 300000) + 30;
+
+    return Promise.all([
+      state.loadedAt ? Promise.resolve(null) : api('/api/v1/status.json'),
+      api('/api/v1/entries/sgv.json?count=' + entryCount + '&find[date][$gte]=' + since),
+      api('/api/v1/treatments.json?count=1000&find[created_at][$gte]=' + sinceIso + '&find[created_at][$lte]=' + nowIso),
+      // last few manual boluses, even if older than 24h
+      api('/api/v1/treatments.json?count=4&find[eventType][$in][]=Bolus&find[eventType][$in][]=Meal%20Bolus&find[eventType][$in][]=Correction%20Bolus&find[created_at][$lte]=' + nowIso),
+      api('/api/v1/devicestatus.json?count=1')
+    ]).then(function (r) {
+      if (r[0]) {
+        var s = r[0].settings || {};
+        state.units = (s.units || 'mmol').indexOf('mmol') === 0 ? 'mmol' : 'mg/dl';
+        if (s.thresholds) state.thr = s.thresholds;
+      }
+      state.entries = (r[1] || []).filter(function (e) { return e.sgv && e.date <= now + 60000; })
+        .sort(function (a, b) { return b.date - a.date; });
+      state.treatments = (r[2] || []).map(function (x) { x._t = tTime(x); return x; })
+        .filter(function (x) { return x._t <= now + 60000; });
+      state.lastBoluses = (r[3] || []).filter(function (x) { return Number(x.insulin) > 0; })
+        .map(function (x) { x._t = tTime(x); return x; }).sort(function (a, b) { return b._t - a._t; });
+      state.ds = (r[4] || [])[0] || null;
+      state.loadedAt = Date.now();
+      $('err').classList.remove('on');
+      render();
+    }).catch(function (e) {
+      $('err').textContent = 'Could not refresh: ' + e.message;
+      $('err').classList.add('on');
+      renderTimes();
+    });
+  }
+
+  // ---------- render ----------
+  function render() {
+    renderBg();
+    renderLoop();
+    renderBolus();
+    renderInsulin();
+    renderChart();
+    renderTimes();
+  }
+
+  function renderBg() {
+    var e = state.entries[0];
+    if (!e) { $('bgValue').textContent = '--'; return; }
+    $('bgValue').textContent = fmtBg(e.sgv);
+    $('bgValue').style.color = bgColor(e.sgv);
+    $('bgArrow').textContent = ARROWS[e.direction] != null ? ARROWS[e.direction] : '';
+    $('bgArrow').style.color = bgColor(e.sgv);
+    // delta vs reading ~5 min earlier
+    var prev = null;
+    for (var i = 1; i < state.entries.length; i++) {
+      var gap = (e.date - state.entries[i].date) / 60000;
+      if (gap >= 2.5 && gap <= 7.5) { prev = state.entries[i]; break; }
+      if (gap > 7.5) break;
+    }
+    $('bgDelta').textContent = prev ? fmtDelta(e.sgv - prev.sgv) + ' ' + (mmol() ? 'mmol/L' : 'mg/dL') : '';
+  }
+
+  function renderLoop() {
+    var ds = state.ds, o = ds && ds.openaps;
+    var sug = o && (o.suggested || o.enacted) || {};
+    var iob = o && o.iob && (Array.isArray(o.iob) ? o.iob[0] : o.iob);
+    $('iob').textContent = iob && iob.iob != null ? fmtU(iob.iob) : '--';
+    $('cob').textContent = sug.COB != null ? Math.round(sug.COB) + ' g' : '--';
+    $('eventual').textContent = sug.eventualBG == null ? '--' : sug.eventualBG < 39 ? '< ' + fmtBg(39) : fmtBg(sug.eventualBG);
+    var en = o && o.enacted;
+    if (en && en.rate != null && en.duration) $('temp').textContent = (Math.round(en.rate * 100) / 100) + ' U/h';
+    else if (iob && iob.lastTemp && iob.lastTemp.rate != null &&
+      minsAgo(Date.parse(iob.lastTemp.timestamp || iob.lastTemp.started_at)) < (iob.lastTemp.duration || 0))
+      $('temp').textContent = (Math.round(iob.lastTemp.rate * 100) / 100) + ' U/h';
+    else $('temp').textContent = 'scheduled';
+    var pump = ds && ds.pump || {};
+    var res = pump.reservoir != null ? pump.reservoir : sug.reservoir;
+    $('reservoir').textContent = res != null ? (Math.round(res * 10) / 10) + ' U' : '--';
+    $('reservoir').className = 'v num' + (res != null && res < 20 ? ' warn' : '');
+    var up = ds && ds.uploader;
+    var bat = up && up.battery;
+    $('phoneBat').textContent = bat != null ? bat + '%' + (up.isCharging ? ' ⚡' : '') : '--';
+    $('phoneBat').className = 'v num' + (bat != null && bat < 20 && !up.isCharging ? ' warn' : '');
+    var st = pump.status || {};
+    $('pumpState').textContent = st.suspended ? 'suspended' : st.bolusing ? 'bolusing' : (st.status || '--');
+    $('pumpState').className = 'v num' + (st.suspended ? ' bad' : '');
+  }
+
+  function renderBolus() {
+    var b = state.lastBoluses[0];
+    if (!b) { $('lbAmount').textContent = 'none'; $('lbAgo').textContent = ''; $('lbTime').textContent = ''; return; }
+    $('lbAmount').textContent = fmtU(Number(b.insulin));
+    $('lbTime').textContent = fmtClock(b._t) + (b.carbs ? ' · ' + b.carbs + ' g' : '');
+    var prev = $('lbPrev'); prev.innerHTML = '';
+    state.lastBoluses.slice(1).forEach(function (x) {
+      var s = document.createElement('span'); s.className = 'pill num';
+      s.textContent = fmtU(Number(x.insulin)) + ' · ' + fmtClock(x._t);
+      prev.appendChild(s);
+    });
+  }
+
+  function renderInsulin() {
+    var today = startOfToday(), threeH = Date.now() - 3 * 3600e3;
+    var smbToday = 0, nSmbToday = 0, bolToday = 0, nBolToday = 0, smb3 = 0, n3 = 0;
+    state.treatments.forEach(function (x) {
+      var u = Number(x.insulin) || 0; if (!u) return;
+      if (isSMB(x)) {
+        if (x._t >= today) { smbToday += u; nSmbToday++; }
+        if (x._t >= threeH) { smb3 += u; n3++; }
+      } else if (x._t >= today) { bolToday += u; nBolToday++; }
+    });
+    $('tSmb').textContent = fmtU(smbToday) + ' · ' + nSmbToday;
+    $('tBolus').textContent = fmtU(bolToday) + ' · ' + nBolToday;
+    $('t3h').textContent = fmtU(smb3) + ' · ' + n3;
+
+    var from = Date.now() - hours * 3600e3;
+    var list = state.treatments.filter(function (x) { return Number(x.insulin) > 0 && x._t >= from; })
+      .sort(function (a, b) { return b._t - a._t; });
+    var box = $('smbList'); box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<div class="muted">No insulin in the last ' + hours + 'h</div>'; return; }
+    list.forEach(function (x) {
+      var d = document.createElement('div');
+      d.className = 'smb num' + (isSMB(x) ? '' : ' manual');
+      d.title = x.eventType;
+      d.innerHTML = '<span class="muted"></span><span class="u"></span>';
+      d.firstChild.textContent = new Date(x._t).toLocaleTimeString([], TIME_FMT);
+      d.lastChild.textContent = (Math.round(x.insulin * 100) / 100) + (isSMB(x) ? '' : ' B');
+      box.appendChild(d);
+    });
+  }
+
+  function renderChart() {
+    var svg = $('chart');
+    var W = svg.clientWidth || 600, H = 240;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var padL = 30, padR = 8, padT = 8, laneH = 46, axisH = 16;
+    var plotB = H - laneH - axisH;           // bottom of BG plot
+    var laneT = plotB + 6, laneB = H - axisH; // insulin lane
+    var now = Date.now(), from = now - hours * 3600e3;
+    var x = function (t) { return padL + (t - from) / (now - from) * (W - padL - padR); };
+
+    var pts = state.entries.filter(function (e) { return e.date >= from; });
+    var conv = mmol() ? 18.0182 : 1;
+    var maxBg = Math.max(mmol() ? 15 : 270, Math.max.apply(null, pts.map(function (e) { return e.sgv; }).concat([0])) / conv + (mmol() ? 1 : 20));
+    var minBg = mmol() ? 2 : 40;
+    var y = function (mgdl) { return padT + (1 - (mgdl / conv - minBg) / (maxBg - minBg)) * (plotB - padT); };
+
+    // target band
+    var t = state.thr;
+    svg.appendChild(svgEl('rect', { x: padL, width: W - padL - padR, y: y(t.bgTargetTop), height: Math.max(0, y(t.bgTargetBottom) - y(t.bgTargetTop)), fill: 'rgba(61,220,132,.07)' }));
+    // grid lines + labels
+    var ticks = mmol() ? [3, 5, 7, 10, 13, 16, 20] : [54, 80, 120, 180, 250, 300, 350];
+    ticks.forEach(function (v) {
+      if (v < minBg || v > maxBg) return;
+      var yy = y(v * conv);
+      svg.appendChild(svgEl('line', { x1: padL, x2: W - padR, y1: yy, y2: yy, stroke: '#262c36', 'stroke-width': 1 }));
+      var tx = svgEl('text', { x: padL - 5, y: yy + 3, 'text-anchor': 'end' }); tx.textContent = v; svg.appendChild(tx);
+    });
+    // time axis
+    var step = hours <= 3 ? 1800e3 : hours <= 6 ? 3600e3 : hours <= 12 ? 2 * 3600e3 : 4 * 3600e3;
+    var first = Math.ceil(from / step) * step;
+    for (var tt = first; tt <= now; tt += step) {
+      var xx = x(tt);
+      svg.appendChild(svgEl('line', { x1: xx, x2: xx, y1: padT, y2: laneB, stroke: '#1d222b', 'stroke-width': 1 }));
+      var lbl = svgEl('text', { x: xx, y: H - 3, 'text-anchor': 'middle' });
+      lbl.textContent = new Date(tt).toLocaleTimeString([], TIME_FMT);
+      svg.appendChild(lbl);
+    }
+    // lane separator
+    svg.appendChild(svgEl('line', { x1: padL, x2: W - padR, y1: laneT - 3, y2: laneT - 3, stroke: '#262c36', 'stroke-width': 1 }));
+    var ltx = svgEl('text', { x: padL - 5, y: laneT + 10, 'text-anchor': 'end' }); ltx.textContent = 'U'; svg.appendChild(ltx);
+
+    // BG dots
+    var r = hours <= 6 ? 3 : hours <= 12 ? 2.3 : 1.7;
+    pts.forEach(function (e) {
+      svg.appendChild(svgEl('circle', { cx: x(e.date), cy: y(e.sgv), r: r, fill: bgColor(e.sgv) }));
+    });
+
+    // insulin + carbs lane
+    var tr = state.treatments.filter(function (q) { return q._t >= from; });
+    var maxU = Math.max(1, Math.max.apply(null, tr.map(function (q) { return Number(q.insulin) || 0; }).concat([0])));
+    var barW = Math.max(2, Math.min(6, (W - padL - padR) / (hours * 12) * 0.8));
+    tr.forEach(function (q) {
+      var u = Number(q.insulin) || 0, xx = x(q._t);
+      if (u > 0) {
+        // sqrt scale so 0.1 U SMBs stay visible next to a 2 U bolus
+        var hgt = Math.max(3, Math.sqrt(u / maxU) * (laneB - laneT - 12));
+        var manual = !isSMB(q);
+        svg.appendChild(svgEl('rect', { x: xx - (manual ? barW : barW / 2), y: laneB - hgt, width: manual ? barW * 2 : barW, height: hgt, rx: 1,
+          fill: manual ? 'var(--insulin)' : 'var(--smb)', opacity: manual ? 1 : 0.85 }));
+        if (manual) {
+          var bl = svgEl('text', { x: xx, y: laneB - hgt - 3, 'text-anchor': 'middle', style: 'fill:var(--insulin);font-weight:600' });
+          bl.textContent = (Math.round(u * 100) / 100) + 'U'; svg.appendChild(bl);
+          svg.appendChild(svgEl('line', { x1: xx, x2: xx, y1: padT, y2: plotB, stroke: 'rgba(74,168,255,.35)', 'stroke-dasharray': '3 3' }));
+        }
+      }
+      var c = Number(q.carbs) || 0;
+      if (c > 0) {
+        svg.appendChild(svgEl('circle', { cx: xx, cy: padT + 8, r: 5, fill: 'var(--carbs)' }));
+        var ct = svgEl('text', { x: xx + 8, y: padT + 11, style: 'fill:var(--carbs)' }); ct.textContent = c + 'g'; svg.appendChild(ct);
+      }
+    });
+  }
+
+  function renderTimes() {
+    var e = state.entries[0];
+    var banner = $('staleBanner'), msgs = [], bad = false;
+    if (e) {
+      $('bgAge').textContent = fmtAgo(e.date);
+      var m = minsAgo(e.date);
+      $('bgAge').className = 'age ' + (m >= BG_VERY_STALE_MIN ? 'bad' : m >= BG_STALE_MIN ? 'warn' : 'muted');
+      $('bgValue').style.opacity = m >= BG_VERY_STALE_MIN ? 0.45 : 1;
+      if (m >= BG_STALE_MIN) { msgs.push('No new BG for ' + Math.floor(m) + ' min — check Dexcom Follow'); bad = bad || m >= BG_VERY_STALE_MIN; }
+    }
+    var ds = state.ds;
+    if (ds) {
+      var lt = Date.parse(ds.created_at);
+      var lm = minsAgo(lt);
+      $('loopAge').textContent = Math.floor(lm) < 1 ? 'now' : Math.floor(lm) + ' min';
+      $('loopAge').className = 'v num' + (lm >= LOOP_STALE_MIN ? ' warn' : '');
+      if (lm >= LOOP_STALE_MIN) msgs.push('Trio last reported ' + Math.floor(lm) + ' min ago');
+    }
+    banner.textContent = msgs.join(' · ');
+    banner.className = 'stale-banner' + (msgs.length ? ' on' : '') + (bad ? ' bad' : '');
+    var b = state.lastBoluses[0];
+    if (b) $('lbAgo').textContent = fmtAgo(b._t);
+    if (state.loadedAt) $('updated').textContent = fmtClock(state.loadedAt);
+    if (e) document.title = fmtBg(e.sgv) + ' ' + (ARROWS[e.direction] || '') + ' · Glance';
+  }
+
+  // ---------- wiring ----------
+  Array.prototype.forEach.call(document.querySelectorAll('#range button'), function (btn) {
+    btn.classList.toggle('on', Number(btn.dataset.h) === hours);
+    btn.addEventListener('click', function () {
+      hours = Number(btn.dataset.h);
+      try { localStorage.setItem('glance.hours', String(hours)); } catch (e) {}
+      Array.prototype.forEach.call(document.querySelectorAll('#range button'), function (b) { b.classList.toggle('on', b === btn); });
+      renderInsulin(); renderChart();
+    });
+  });
+  var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(renderChart, 150); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(); });
+  setInterval(function () { if (!document.hidden) load(); }, REFRESH_MS);
+  setInterval(renderTimes, TICK_MS);
+  load();
+})();
+</script>
+</body>
+</html>
